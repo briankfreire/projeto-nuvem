@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WattReport</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===== Topo ===== -->
+  <header class="topo">
+    <div class="container topo__conteudo">
+      <div class="marca">
+        <div class="marca__icone">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+            <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/>
+          </svg>
+        </div>
+        <div>
+          <div class="marca__nome">WattReport</div>
+          <div class="marca__sub">Relatórios de consumo de energia sob demanda</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <span class="pilula" id="pilula-rabbit"><span class="ponto" id="ponto-rabbit"></span><span id="texto-rabbit">RabbitMQ conectado</span></span>
+        <span class="pilula" id="pilula-fila">fila: — msgs</span>
+        <span class="pilula" id="pilula-workers">workers B: —</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ===== Linha 1: formulário + indicadores ===== -->
+    <div class="linha-topo">
+
+      <section class="cartao">
+        <h2>Novo relatório</h2>
+        <p class="subtitulo">O pedido entra na fila e um worker gera o relatório em segundo plano. Tipo de consumidor e tarifa vêm do cadastro do medidor (1 a 200).</p>
+
+        <form class="formulario" id="form-relatorio" novalidate>
+          <div class="campos campos--2">
+            <div class="campo">
+              <label for="medidor">Medidor</label>
+              <input type="number" id="medidor" name="medidor" value="42" min="1" max="200" required>
+            </div>
+            <div class="campo">
+              <label for="mes">Mês</label>
+              <input type="month" id="mes" name="mes" value="2026-10" required>
+            </div>
+          </div>
+
+          <div class="acoes">
+            <button type="submit" class="botao botao--primario">Gerar relatório</button>
+            <button type="button" class="botao botao--secundario" id="btn-carga">Gerar 50 (teste de carga)</button>
+          </div>
+          <p class="form-msg" id="form-msg" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <aside class="indicadores">
+        <div class="cartao indicador">
+          <span>Pendentes</span>
+          <strong class="valor valor--amarelo" id="ind-pendentes">—</strong>
+        </div>
+        <div class="cartao indicador">
+          <span>Concluídos</span>
+          <strong class="valor valor--verde" id="ind-concluidos">—</strong>
+        </div>
+        <div class="cartao indicador">
+          <span>Tempo médio por relatório</span>
+          <strong class="valor valor--mono" id="ind-tempo">—</strong>
+        </div>
+      </aside>
+
+    </div>
+
+    <!-- ===== Linha 2: tabela + detalhe ===== -->
+    <div class="linha-baixo">
+
+      <section class="cartao">
+        <div class="cartao__cabecalho">
+          <h2>Relatórios</h2>
+          <span class="nota">Atualiza a cada 2 s</span>
+        </div>
+
+        <div class="tabela-wrap">
+          <table class="tabela" id="tabela-relatorios">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Medidor</th>
+                <th>Mês</th>
+                <th>Status</th>
+                <th class="direita">Consumo</th>
+                <th>Processado por</th>
+              </tr>
+            </thead>
+            <tbody id="corpo-tabela">
+              <tr class="vazio"><td colspan="6">Carregando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="detalhe" id="detalhe">
+        <div class="detalhe__meta" id="det-meta">nenhum relatório selecionado</div>
+        <h2 id="det-titulo">Detalhe do relatório</h2>
+
+        <div id="det-conteudo">
+          <p class="detalhe__vazio">Gere um relatório ou clique em uma linha da tabela para ver o resultado.</p>
+        </div>
+
+        <div class="detalhe__rodape" id="det-rodape">—</div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="rodape">
+    Leituras simuladas · Projeto de Serviços em Nuvem · NGINX → Serviço A → RabbitMQ → Serviço B
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
