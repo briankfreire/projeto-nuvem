@@ -1,0 +1,46 @@
+# Kustomize (já embutido no kubectl):  kubectl apply -k .
+#
+# Gera ConfigMaps e Secret a partir dos MESMOS arquivos usados pelo Docker Compose
+# (database/, nginx/ e .env): nada de cópias que divergem com o tempo.
+# Os nomes gerados levam um HASH do conteúdo: mudou a configuração, muda o nome,
+# e os Pods que dependem dela são recriados automaticamente.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wattreport
+
+resources:
+  - k8s/00-namespace.yaml
+  - k8s/10-postgres.yaml
+  - k8s/11-rabbitmq.yaml
+  - k8s/20-servico-a.yaml
+  - k8s/30-servico-b.yaml
+  - k8s/40-nginx.yaml
+  - k8s/50-ingress.yaml
+
+configMapGenerator:
+  - name: app-config
+    literals:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - TRABALHO_CPU_MS=1500
+      - TAXA_FALHA_SIMULADA=0
+  - name: postgres-init
+    files:
+      - database/01-schema.sql
+      - database/02-dados-iniciais.sql
+      - database/03-usuario-app.sh
+  - name: nginx-conf
+    files:
+      - nginx/nginx.conf
+  - name: nginx-html
+    files:
+      - nginx/html/index.html
+      - nginx/html/style.css
+      - nginx/html/app.js
+
+secretGenerator:
+  - name: wattreport-secret
+    envs:
+      - .env

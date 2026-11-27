@@ -1,0 +1,71 @@
+# PostgreSQL: componente COM ESTADO -> StatefulSet + volume próprio (PVC).
+# Os scripts de database/ chegam como ConfigMap gerado pelo Kustomize
+# (os MESMOS arquivos usados no Docker Compose).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None   # headless: "postgres" aponta para o Pod postgres-0
+  selector: { app: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          env:
+            - { name: POSTGRES_DB,       valueFrom: { secretKeyRef: { name: wattreport-secret, key: POSTGRES_DB } } }
+            - { name: POSTGRES_USER,     valueFrom: { secretKeyRef: { name: wattreport-secret, key: POSTGRES_USER } } }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: wattreport-secret, key: POSTGRES_PASSWORD } } }
+            - { name: APP_DB_USER,       valueFrom: { secretKeyRef: { name: wattreport-secret, key: APP_DB_USER } } }
+            - { name: APP_DB_PASSWORD,   valueFrom: { secretKeyRef: { name: wattreport-secret, key: APP_DB_PASSWORD } } }
+            # PGDATA numa SUBPASTA: a raiz do volume pode conter "lost+found",
+            # o que impediria a inicialização do Postgres
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          volumeMounts:
+            - { name: dados, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 60
+            periodSeconds: 20
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: dados
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

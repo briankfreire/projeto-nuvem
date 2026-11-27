@@ -1,0 +1,59 @@
+# Serviço B (worker): Deployment SEM Service. Ninguém chama o worker;
+# ele só abre conexões de saída para o RabbitMQ e o PostgreSQL.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: servico-b
+  labels: { app: servico-b }
+spec:
+  replicas: 1   # mude com "kubectl scale" ou deixe o HPA (hpa-servico-b.yaml) decidir
+  selector:
+    matchLabels: { app: servico-b }
+  template:
+    metadata:
+      labels: { app: servico-b }
+    spec:
+      terminationGracePeriodSeconds: 30   # tempo para terminar o relatório atual
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: servico-b
+          image: wattreport/servico-b:2.0.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: app-config }
+          env:
+            - { name: HEALTH_PORT, value: "8081" }
+            - { name: DB_NAME,           valueFrom: { secretKeyRef: { name: wattreport-secret, key: POSTGRES_DB } } }
+            - { name: APP_DB_USER,       valueFrom: { secretKeyRef: { name: wattreport-secret, key: APP_DB_USER } } }
+            - { name: APP_DB_PASSWORD,   valueFrom: { secretKeyRef: { name: wattreport-secret, key: APP_DB_PASSWORD } } }
+            - { name: RABBITMQ_USER,     valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_USER } } }
+            - { name: RABBITMQ_PASSWORD, valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_PASSWORD } } }
+            - { name: RABBITMQ_VHOST,    valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_VHOST } } }
+          ports:
+            - { name: health, containerPort: 8081 }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          # requests.cpu é OBRIGATÓRIO para o HPA por CPU (utilização = uso / request)
+          resources:
+            requests: { cpu: 200m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 192Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: health }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: health }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+      volumes:
+        - name: tmp
+          emptyDir: {}

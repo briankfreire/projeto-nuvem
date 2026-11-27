@@ -1,0 +1,62 @@
+# RabbitMQ: componente COM ESTADO -> StatefulSet + PVC.
+# Uma única instância (aceito no escopo do projeto): sem alta disponibilidade.
+# As filas são quorum (prontas para replicação se houver mais nós no futuro).
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  clusterIP: None
+  selector: { app: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672, targetPort: 5672 }
+    - { name: management, port: 15672, targetPort: 15672 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: { app: rabbitmq }
+  template:
+    metadata:
+      labels: { app: rabbitmq }
+    spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.1-management-alpine
+          ports:
+            - { name: amqp, containerPort: 5672 }
+            - { name: management, containerPort: 15672 }
+          env:
+            - { name: RABBITMQ_DEFAULT_USER,  valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_USER } } }
+            - { name: RABBITMQ_DEFAULT_PASS,  valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_PASSWORD } } }
+            - { name: RABBITMQ_DEFAULT_VHOST, valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_VHOST } } }
+          volumeMounts:
+            - { name: dados, mountPath: /var/lib/rabbitmq }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          readinessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "ping"] }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 8
+          livenessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "-q", "status"] }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 15
+  volumeClaimTemplates:
+    - metadata:
+        name: dados
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

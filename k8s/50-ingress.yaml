@@ -1,0 +1,22 @@
+# Ponto de entrada do cluster pedido no enunciado: NGINX Ingress Controller.
+# Ele encaminha tudo para o NGINX da aplicação, que mantém as mesmas regras do
+# Compose (front, /api, limite por IP, request id, health oculto).
+#
+# Sem o addon de ingress habilitado, este recurso não tem efeito e o acesso
+# pode ser feito por port-forward (como no material de apoio):
+#   kubectl port-forward -n wattreport svc/nginx 8080:80
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wattreport
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx
+                port: { number: 80 }

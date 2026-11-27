@@ -1,0 +1,78 @@
+# Serviço A (API): sem estado (o estado está no PostgreSQL) -> Deployment com 2 réplicas.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: servico-a
+  labels: { app: servico-a }
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # na atualização, a réplica nova fica pronta ANTES de a antiga sair
+      maxSurge: 1
+  selector:
+    matchLabels: { app: servico-a }
+  template:
+    metadata:
+      labels: { app: servico-a }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000   # usuário "node" da imagem
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: servico-a
+          image: wattreport/servico-a:2.0.0
+          imagePullPolicy: IfNotPresent   # usa a imagem construída no Docker do Minikube
+          ports:
+            - { name: http, containerPort: 3000 }
+          envFrom:
+            - configMapRef: { name: app-config }
+          env:
+            - { name: PORT, value: "3000" }
+            # cada Pod recebe SÓ as chaves do Secret que usa (nada de senha de administrador)
+            - { name: DB_NAME,           valueFrom: { secretKeyRef: { name: wattreport-secret, key: POSTGRES_DB } } }
+            - { name: APP_DB_USER,       valueFrom: { secretKeyRef: { name: wattreport-secret, key: APP_DB_USER } } }
+            - { name: APP_DB_PASSWORD,   valueFrom: { secretKeyRef: { name: wattreport-secret, key: APP_DB_PASSWORD } } }
+            - { name: RABBITMQ_USER,     valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_USER } } }
+            - { name: RABBITMQ_PASSWORD, valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_PASSWORD } } }
+            - { name: RABBITMQ_VHOST,    valueFrom: { secretKeyRef: { name: wattreport-secret, key: RABBITMQ_VHOST } } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          # vivo? não depende de nada externo -> se falhar, reinicia
+          livenessProbe:
+            httpGet: { path: /api/health/live, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          # pronto? consulta o banco -> se falhar, só sai do balanceamento
+          readinessProbe:
+            httpGet: { path: /api/health/ready, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          lifecycle:
+            # dá tempo para o Service parar de mandar tráfego antes do SIGTERM
+            preStop:
+              exec: { command: ["sleep", "5"] }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: servico-a
+spec:
+  type: ClusterIP   # só dentro do cluster
+  selector: { app: servico-a }
+  ports:
+    - { name: http, port: 3000, targetPort: http }
