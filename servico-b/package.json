@@ -1,0 +1,29 @@
+{
+  "name": "servico-b",
+  "version": "2.0.0",
+  "private": true,
+  "description": "WattReport - Serviço B (worker consumidor da fila de relatórios)",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.9",
+    "pg": "^8.16.3",
+    "pino": "^9.9.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.8",
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.5",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
