@@ -1,0 +1,169 @@
+# =====================================================================
+# WattReport - Etapa 1: Docker Compose
+#
+#   navegador --(8080)--> nginx --[rede borda]--> servico-a --[rede dados]--> postgres
+#                                                     |                        ^
+#                                                     +--publica--> rabbitmq --+--> servico-b (N réplicas)
+#
+# Só o NGINX publica porta para o cliente. Postgres e AMQP nunca ficam expostos.
+#
+# Uso:  cp .env.example .env   (troque as senhas)
+#       docker compose config   (confere as variáveis)
+#       docker compose up -d --build
+# =====================================================================
+
+name: wattreport
+
+# Variáveis comuns a Serviço A e Serviço B: um bloco só, reaproveitado por âncora
+# (evita que as duas configurações divirjam).
+x-app-env: &app-env
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: ${POSTGRES_DB:?defina POSTGRES_DB no .env}
+  APP_DB_USER: ${APP_DB_USER:?defina APP_DB_USER no .env}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:?defina APP_DB_PASSWORD no .env}
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: ${RABBITMQ_USER:?defina RABBITMQ_USER no .env}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD no .env}
+  RABBITMQ_VHOST: ${RABBITMQ_VHOST:-wattreport}
+
+# Endurecimento dos containers da aplicação:
+# sistema de arquivos SOMENTE LEITURA (só /tmp gravável, em memória),
+# sem novas permissões e sem capabilities do kernel.
+x-endurecido: &endurecido
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.28-alpine   # NGINX sem root, porta interna 8080
+    <<: *endurecido
+    ports:
+      - "${PORTA_APP:-8080}:8080"
+    volumes:
+      # mesmos arquivos usados no Kubernetes (lá viram ConfigMaps)
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    depends_on:
+      servico-a:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks: [borda]
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: 128M }
+    restart: unless-stopped
+
+  servico-a:
+    build: ./servico-a
+    image: wattreport/servico-a:2.0.0
+    <<: *endurecido
+    environment:
+      <<: *app-env
+      PORT: "3000"
+    depends_on:
+      # O BANCO é requisito de prontidão. O RabbitMQ NÃO: graças ao outbox,
+      # a API aceita pedidos mesmo com o broker fora (ou ainda subindo).
+      postgres:
+        condition: service_healthy
+    networks: [borda, dados]   # recebe do NGINX e fala com banco e broker
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  servico-b:
+    build: ./servico-b
+    image: wattreport/servico-b:2.0.0
+    <<: *endurecido
+    environment:
+      <<: *app-env
+      TRABALHO_CPU_MS: ${TRABALHO_CPU_MS:-1500}
+      TAXA_FALHA_SIMULADA: ${TAXA_FALHA_SIMULADA:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks: [dados]          # NÃO está na rede do NGINX
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+    # tempo para terminar o relatório atual antes do SIGKILL
+    stop_grace_period: 30s
+    # se cair (ex.: perdeu o RabbitMQ), volta sozinho
+    restart: unless-stopped
+    # sem container_name e sem ports: permite "docker compose up -d --scale servico-b=4"
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      APP_DB_USER: ${APP_DB_USER}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata   # subpasta do volume
+    volumes:
+      - dados-postgres:/var/lib/postgresql/data
+      # scripts de criação: rodam SÓ na primeira subida (volume vazio)
+      - ./database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1 força TCP: durante a inicialização o Postgres só escuta no
+      # socket local, então o check só passa quando o banco está pronto de verdade.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [dados]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    hostname: rabbitmq   # fixo: os dados ficam ligados ao nome do nó (rabbit@rabbitmq)
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-wattreport}
+    volumes:
+      - dados-rabbitmq:/var/lib/rabbitmq
+    ports:
+      # Painel de administração só em 127.0.0.1 (não fica acessível pela rede).
+      # Na VM, use túnel SSH. A porta AMQP (5672) NÃO é publicada.
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [dados]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    restart: unless-stopped
+
+networks:
+  borda:   # NGINX <-> Serviço A
+  dados:   # Serviço A, Serviço B, PostgreSQL e RabbitMQ (o NGINX não alcança o banco)
+
+volumes:
+  dados-postgres:
+  dados-rabbitmq:
