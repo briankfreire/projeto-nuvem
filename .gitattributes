@@ -1,0 +1,5 @@
+# Garante quebra de linha LF (padrão Linux) mesmo editando no Windows.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
